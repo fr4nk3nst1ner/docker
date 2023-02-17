@@ -1,0 +1,64 @@
+version: '3'
+services:
+
+  redis:
+    image: redis:5.0.6
+    restart: unless-stopped
+
+  db:
+    image: mysql:8.0.19
+    command: --default-authentication-plugin=mysql_native_password
+    container_name: mysqlmisp
+    restart: always
+    secrets:
+      - MYSQL_PASSWORD
+      - MYSQL_ROOT_PASSWORD
+    environment:
+      - "MYSQL_USER=misp"
+      - "MYSQL_PASSWORD=/run/secret/MYSQL_PASSWORD"
+      - "MYSQL_ROOT_PASSWORD=/run/secret/MYSQL_ROOT_PASSWORD"
+      - "MYSQL_DATABASE=misp"
+    volumes:
+      - /path/to/docker/mysql/folder:/var/lib/mysql
+    cap_add:
+      - SYS_NICE  # CAP_SYS_NICE Prevent runaway mysql log
+
+  misp:
+    image: coolacid/misp-docker:core-latest
+    restart: unless-stopped
+    depends_on:
+      - redis
+      - db
+    ports:
+      - "8081:80"
+      - "8443:443"
+    volumes:
+      - "/path/to/docker/folder/server-configs/:/var/www/MISP/app/Config/"
+      - "/path/to/docker/folder/logs/:/var/www/MISP/app/tmp/logs/"
+      - "/path/to/docker/folder/files/:/var/www/MISP/app/files"
+      - "/path/to/docker/folder/ssl/:/etc/nginx/certs"
+    secrets:
+      - MISP_ADMIN_PASSPHRASE
+    environment:
+      - "HOSTNAME=https://IP_ADDRESS_GOES_HERE:8443"
+      - "REDIS_FQDN=redis"
+      - "MISP_ADMIN_PASSPHRASE=/run/secret/MISP_ADMIN_PASSPHRASE"
+      - "INIT=true"             # Initialze MISP, things includes, attempting to import SQL and the Files DIR
+      - "CRON_USER_ID=1"        # The MISP user ID to run cron jobs as
+  
+  misp-modules:
+    image: coolacid/misp-docker:modules-latest
+    restart: unless-stopped
+    environment:
+      - "REDIS_BACKEND=redis"
+    depends_on:
+      - redis
+      - db
+
+secrets:
+  MYSQL_PASSWORD:
+    external: true
+  MYSQL_ROOT_PASSWORD:
+    external: true
+  MISP_ADMIN_PASSPHRASE:
+    external: true

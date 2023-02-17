@@ -1,0 +1,144 @@
+version: '3.7'
+services:
+    # MongoDB: https://hub.docker.com/_/mongo/
+    mongo:
+      image: mongo:4.2
+      container_name: mongodb-graylog
+      restart: unless-stopped
+      hostname: mongodb-graylog
+      environment:
+        - PUID=1100
+        - PGID=1100
+      volumes:
+        - mongo_data:/path/to/graylog/mongo
+        - /path/to/graylog/mongo:/data/db
+    elasticsearch:
+      container_name: elastic-graylog
+      restart: unless-stopped
+      hostname: elastic-graylog
+      ports:
+      - 9200:9200
+      - 9300:9300
+      image: docker.elastic.co/elasticsearch/elasticsearch:7.17.0
+      volumes:
+      - es_data:/path/to/graylog/elasticsearch
+      - /path/to/graylog/elasticsearch:/usr/share/elasticsearch/data
+      secrets:
+        - ELASTIC_PASSWORD
+      environment:
+        - discovery.type=single-node
+        - http.host=0.0.0.0
+        - http.port=9200
+        - ELASTIC_USER=elastic
+        - ELASTIC_PASSWORD=/run/secret/ELASTIC_PASSWORD
+        - http.cors.enabled=true
+        - http.cors.allow-headers=X-Requested-With,X-Auth-Token,Content-Type,Content-Length,Authorization
+        - http.cors.allow-credentials=true
+        - network.host=0.0.0.0
+        - "ES_JAVA_OPTS=-Dlog4j2.formatMsgNoLookups=true -Xms4g -Xmx4g"
+        - ES_HEAP_SIZE=2g
+        - PGID=1100
+        - PUID=1100
+        - ilm_enabled=false
+        - xpack.security.enabled=true
+        - xpack.security.authc.api_key.enabled=true
+      ulimits:
+        memlock:
+          soft: -1
+          hard: -1
+      deploy:
+        resources:
+          limits:
+            memory: 8g
+            cpus: '4.0'
+          reservations:
+            memory: 4g
+            cpus: '2.0'
+
+    graylog:
+      container_name: graylog
+      restart: unless-stopped
+      hostname: graylog
+      image: graylog/graylog:4.3.9
+      secrets:
+        - GRAYLOG_PASSWORD_SECRET
+        - GRAYLOG_ROOT_PASSWORD_SHA2
+
+      volumes:
+        - graylog_data:/path/to/graylog/graylog
+        - /path/to/graylog/graylog/journal:/usr/share/graylog/data/journal
+        - /path/to/graylog/graylog/config:/usr/share/graylog/data/config
+        - /path/to/graylog/graylog/node-id:/etc/graylog/server/node-id
+      environment:
+        - http_bind_address=0.0.0.0
+        - PUID=1100
+        - PGID=1100
+        # CHANGE ME (must be at least 16 characters)!
+        - GRAYLOG_PASSWORD_SECRET=/run/secret/GRAYLOG_PASSWORD_SECRET
+        - GRAYLOG_ROOT_PASSWORD_SHA2=/run/secret/GRAYLOG_ROOT_PASSWORD_SHA2
+        - GRAYLOG_HTTP_EXTERNAL_URI=http://localhost:9000/
+        - TZ=America/Chicago
+        - allow_leading_wildcard_searches=true
+      entrypoint: /usr/bin/tini -- wait-for-it elasticsearch:9200 --  /docker-entrypoint.sh
+      restart: always
+      depends_on:
+        - mongo
+        - elasticsearch
+      ports:
+        # Graylog web interface and REST API
+        - 9000:9000
+        #syslog 514 tcp
+        - 514:514
+        #beats5044tcp
+        - 5044:5044
+        #beats5044udp
+        - 5044:5044/udp
+        #Syslog 514 udp
+        - 514:514/udp
+        # Syslog TCP
+        - 1514:1514
+        # Syslog UDP
+        - 1514:1514/udp
+        # GELF TCP
+        - 12201:12201
+        # GELF UDP
+        - 12201:12201/udp
+
+
+    kibana:
+      hostname: kibana
+      container_name: kibana
+      restart: unless-stopped
+      #network_mode: "host"
+      image: docker.elastic.co/kibana/kibana:7.17.0
+      ports:
+        - "5601:5601"
+      environment:
+        - "XPACK_FLEET_AGENTS_FLEET_SERVER_HOSTS=[\"http://localhost:8220\"]"
+        - "XPACK_FLEET_AGENTS_ELASTICSEARCH_HOSTS=[\"http://localhost:9200\"]"
+        - PGID="1100"
+        - PUID="1100"
+        - TZ='America/Chicago'
+      volumes:
+        - '/path/to/graylog/kibana.yml:/usr/share/kibana/config/kibana.yml'
+      cap_add:
+        - NET_ADMIN
+      restart: unless-stopped
+      depends_on:
+        - elasticsearch
+
+volumes:
+  mongo_data:
+    driver: local
+  es_data:
+    driver: local
+  graylog_data:
+    driver: local
+
+secrets:
+  ELASTIC_PASSWORD:
+    external: true
+  GRAYLOG_PASSWORD_SECRET:
+    external: true
+  GRAYLOG_ROOT_PASSWORD_SHA2:
+    external: TRUE
